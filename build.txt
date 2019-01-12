@@ -1,0 +1,5 @@
+author = dradonhunter11
+version = 0.1
+displayName = Example Terra Energy API Mod
+modReferences = TerraEnergyLibrary
+languageVersion = 6
