@@ -1,14 +1,21 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using ExampleTEMod.TileEntities;
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
 using TerraEnergyLibrary.API;
+using TerraEnergyLibrary.API.Enum;
+using TerraEnergyLibrary.API.Interface;
 using Terraria;
 using Terraria.DataStructures;
+using Terraria.Enums;
 using Terraria.ID;
 using Terraria.ModLoader;
+using Terraria.ModLoader.IO;
 using Terraria.ObjectData;
 
 namespace ExampleTEMod.Tiles
@@ -23,7 +30,12 @@ namespace ExampleTEMod.Tiles
         public override void SetDefaults()
         {
             Main.tileFrameImportant[Type] = true;
-            TileObjectData.newTile.Origin = new Point16(1, 1);
+            TileObjectData.newTile.CopyFrom(TileObjectData.Style1x1);
+            TileObjectData.newTile.Origin = new Point16(0, 0);
+            TileObjectData.newTile.Width = 1;
+            TileObjectData.newTile.Height = 1;
+            TileObjectData.newTile.CoordinateHeights = new int[] { 16 };
+            TileObjectData.newTile.AnchorBottom = new AnchorData(AnchorType.None, 0, 0);
             TileObjectData.newTile.HookPostPlaceMyPlayer = new PlacementHook(mod.GetTileEntity<GeneratorTileEntity>().Hook_AfterPlacement, -1, 0, false);
             TileObjectData.addTile(Type);
         }
@@ -36,26 +48,26 @@ namespace ExampleTEMod.Tiles
         /// <param name="j"></param>
         public override void RightClick(int i, int j)
         {
-
-            Tile tile = Main.tile[i, j];
-
-            int left = i - (tile.frameX / 18);
-            int top = j - (tile.frameY / 18);
-
-            int index = mod.GetTileEntity<GeneratorTileEntity>().Find(left, top);
-
-            if (index == -1)
+            GeneratorTileEntity tileEntity = ExampleTEMod.GetTileEntity(i, j) as GeneratorTileEntity;
+            if (tileEntity != null)
             {
-                Main.NewText("An error happened");
+                Main.NewText(tileEntity.GetEnergyStored(null) + "/" + tileEntity.GetMaxEnergyStorage(null) + " TE");
+            }
+        }
+
+        
+
+        public override void KillTile(int i, int j, ref bool fail, ref bool effectOnly, ref bool noItem)
+        {
+            if (fail || effectOnly)
+            {
                 return;
             }
-
-            GeneratorTileEntity tileEntity = TileEntity.ByID[index] as GeneratorTileEntity;
-            Main.NewText(tileEntity.EnergyContainer.GetCurrentEnergy() + "/" + tileEntity.EnergyContainer.MaxEnergy + " TE");
+            mod.GetTileEntity("GeneratorTileEntity").Kill(i, j);
         }
     }
 
-    class GeneratorTileEntity : TileEntityEnergyHandler
+    class GeneratorTileEntity : ProviderTileEntity
     {
         /// <summary>
         /// A timer between each synchronization in multiplayer, in this case it will do 20 time per second. 
@@ -64,11 +76,10 @@ namespace ExampleTEMod.Tiles
         /// <summary>
         /// Here we set the capacity of the tile entity, the max transfer rate and the max receive rate of the the tile entity
         /// </summary>
-        public GeneratorTileEntity() : base(40000, 4, 16)
+
+        public GeneratorTileEntity() : base(40000, 16)
         {
         }
-
-
 
         /// <summary>
         /// Generate energy as long the generator is not full.
@@ -78,10 +89,24 @@ namespace ExampleTEMod.Tiles
         {
             try
             {
-                if (EnergyContainer.GetCurrentEnergy() != EnergyContainer.MaxEnergy)
+                if (storage.GetCurrentEnergy() != storage.MaxEnergy)
                 {
-                    this.EnergyContainer.ReceiveEnergy(4);
+                    storage.ModifyEnergy(4);
                 }
+                
+                ModTileEntity up = ExampleTEMod.GetTileEntity(Position.X, Position.Y - 1);
+                ModTileEntity down = ExampleTEMod.GetTileEntity(Position.X, Position.Y + 1);
+                ModTileEntity left = ExampleTEMod.GetTileEntity(Position.X - 1, Position.Y);
+                ModTileEntity right = ExampleTEMod.GetTileEntity(Position.X + 1, Position.Y);
+
+                long usedEnergy = 0;
+
+                ProcessSide(up, Side.up, Side.down, ref usedEnergy);
+                ProcessSide(down, Side.down, Side.up, ref usedEnergy);
+                ProcessSide(left, Side.left, Side.right, ref usedEnergy);
+                ProcessSide(right, Side.right, Side.left, ref usedEnergy);
+
+                storage.TransferEnergy(usedEnergy);
 
                 if (Main.netMode == NetmodeID.Server)
                 {
@@ -92,12 +117,21 @@ namespace ExampleTEMod.Tiles
                         NetMessage.SendData(MessageID.TileEntitySharing, -1, -1, null, ID);
                         updateTimer = 3;
                     }
-                }
+                }  
+                storage.WriteTagCompound(tag);
             }
             catch (Exception e)
             {
                 Console.WriteLine(e.Message);
                 Console.WriteLine(e.StackTrace);
+            }
+        }
+
+        private void ProcessSide(ModTileEntity tileEntity, Side side, Side machineSide, ref long usedEnergy)
+        {
+            if (tileEntity is EnergyReceiver handler && handler.CanConnect(machineSide))
+            {
+                usedEnergy += SendEnergy(handler, storage.MaxTransfer, machineSide);
             }
         }
 
@@ -132,5 +166,6 @@ namespace ExampleTEMod.Tiles
             }
             return Place(i, j);
         }
+
     }
 }
